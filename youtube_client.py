@@ -1,5 +1,7 @@
 import asyncio
 from typing import List, Optional
+import time
+import functools
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel
@@ -12,16 +14,40 @@ class Video(BaseModel):
     video_id: str
     type: str  # 'VOD' or 'Short'
 
+def retry_async(max_retries=3, delay=1.0, backoff=2.0):
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            current_delay = delay
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except HttpError as e:
+                    if e.resp.status in [429, 500, 502, 503, 504] and attempt < max_retries - 1:
+                        # Log warning here if logger available
+                        print(f"Retrying {func.__name__} due to {e.resp.status} (attempt {attempt+1}/{max_retries})")
+                        await asyncio.sleep(current_delay)
+                        current_delay *= backoff
+                    else:
+                        raise e
+            return await func(*args, **kwargs) # Should not reach here
+        return wrapper
+    return decorator
+
 class YoutubeClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.service = build('youtube', 'v3', developerKey=self.api_key)
         self.executor = ThreadPoolExecutor(max_workers=5)
 
+    def close(self):
+        self.executor.shutdown(wait=False)
+
     async def _run_in_executor(self, func, *args, **kwargs):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self.executor, lambda: func(*args, **kwargs))
 
+    @retry_async()
     async def search_channel(self, name: str) -> Optional[tuple[str, str]]:
         """
         Searches for a channel by name.
@@ -47,6 +73,7 @@ class YoutubeClient:
             # For API errors, logging is key.
             return None
 
+    @retry_async()
     async def get_vods(self, channel_id: str) -> List[Video]:
         """
         Fetches top 3 most watched VODs from the last 50 uploads.
@@ -103,6 +130,7 @@ class YoutubeClient:
             # But adhering to the interface returning List[Video], empty list is safest fallback.
             return []
 
+    @retry_async()
     async def get_shorts(self, channel_id: str) -> List[Video]:
         """
         Fetches top 3 most watched Shorts.

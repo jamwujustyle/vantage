@@ -6,14 +6,16 @@ import time
 from unittest.mock import MagicMock, patch
 from database import Database
 from youtube_client import YoutubeClient, Video
+from services import ChannelService
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v2.db"
+        self.db_path = "test_bot_data_v3.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
     async def asyncTearDown(self):
+        await self.db.close()
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
@@ -45,6 +47,9 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.client = YoutubeClient(api_key="TEST_KEY")
         self.client.service = MagicMock()
+
+    def tearDown(self):
+        self.client.close()
 
     async def test_search_channel(self):
         mock_execute = MagicMock(return_value={
@@ -89,6 +94,25 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].title, "Video 2")
         self.assertEqual(result[0].view_count, 200)
+
+class TestChannelService(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.db_path = "test_service_db.db"
+        self.db = Database(self.db_path)
+        await self.db.init_db()
+        self.client = MagicMock()
+        self.service = ChannelService(self.db, self.client)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    async def test_resolve_channel_cached(self):
+        await self.db.set_channel_id("exists", "UC1", "Exists")
+        res = await self.service.resolve_channel("exists")
+        self.assertEqual(res, ("UC1", "Exists", "exists"))
+        self.client.search_channel.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

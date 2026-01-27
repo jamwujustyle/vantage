@@ -1,8 +1,16 @@
-import os
+from pydantic_settings import BaseSettings
+from pydantic import Field
 from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+class Settings(BaseSettings):
+    BOT_TOKEN: str = Field(..., description="Telegram Bot Token")
+    YOUTUBE_API_KEY: str = Field(..., description="YouTube Data API Key")
+    DB_PATH: str = Field("bot_data.db", description="Path to SQLite database")
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+settings = Settings()
