@@ -1,28 +1,14 @@
-import re
+import asyncio
 from aiogram import Router, F, html
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.chat_action import ChatActionSender
 from database import Database
-from youtube_client import YoutubeClient, Video
+from youtube_client import YoutubeClient
+from services import ChannelService
+from utils import parse_compare_args, split_text
 
 router = Router()
-
-def format_number(num: int) -> str:
-    if num >= 1_000_000:
-        return f"{num / 1_000_000:.1f}M"
-    elif num >= 1_000:
-        return f"{num / 1_000:.1f}K"
-    return str(num)
-
-def generate_report(channel_title: str, channel_id: str, videos: list[Video], mode: str) -> str:
-    header = html.bold(html.link(channel_title, f"https://www.youtube.com/channel/{channel_id}"))
-    lines = [header]
-    if not videos:
-        lines.append(f"No {mode}s found or accessible.")
-    else:
-        for i, video in enumerate(videos, 1):
-            lines.append(f"{i}. {html.link(video.title, video.url)} ({format_number(video.view_count)})")
-    return "\n".join(lines)
 
 def get_keyboard(current_mode: str) -> InlineKeyboardMarkup:
     target_mode = "Shorts" if current_mode == "VODs" else "VODs"
@@ -31,121 +17,126 @@ def get_keyboard(current_mode: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"Switch to {target_mode}", callback_data=callback_data)]
     ])
 
-async def fetch_data_for_channel(db: Database, client: YoutubeClient, channel_id: str, channel_title: str, mode: str) -> str:
-    cache_key = f"{'shorts' if mode == 'Shorts' else 'vods'}:{channel_id}"
-
-    # Try cache
-    cached_data = await db.get_cache(cache_key)
-    if cached_data:
-        # Deserialize to Video objects
-        videos = [Video(**v) for v in cached_data]
-        return generate_report(channel_title, channel_id, videos, mode)
-
-    # Fetch from API
-    if mode == "Shorts":
-        videos = await client.get_shorts(channel_id)
-    else:
-        videos = await client.get_vods(channel_id)
-
-    # Save to cache
-    await db.set_cache(cache_key, [v.model_dump() for v in videos])
-
-    return generate_report(channel_title, channel_id, videos, mode)
+@router.message(Command("start", "help"))
+async def cmd_welcome(message: Message):
+    text = (
+        f"👋 <b>Welcome to YT-Vantage!</b>\n\n"
+        f"I can help you compare the most popular videos of your favorite YouTubers.\n\n"
+        f"<b>Commands:</b>\n"
+        f"• /compare [channel1] [channel2] ... — Compare top 3 VODs/Shorts.\n"
+        f"  <i>Example:</i> <code>/compare PewDiePie \"MrBeast Gaming\"</code>\n\n"
+        f"I support quotes for names with spaces!"
+    )
+    await message.answer(text)
 
 @router.message(Command("compare"))
 async def cmd_compare(message: Message, db: Database, client: YoutubeClient):
-    args = message.text.split()[1:]
+    args = parse_compare_args(message.text)
     if not args:
         await message.answer("Usage: /compare [blogger1] [blogger2] ...")
         return
 
-    report_parts = []
+    service = ChannelService(db, client)
 
-    for name in args:
-        # Resolve channel ID
-        channel_info = await db.get_channel_id(name)
-        if not channel_info:
-            found = await client.search_channel(name)
-            if found:
-                channel_id, title = found
-                await db.set_channel_id(name, channel_id, title)
-                channel_info = (channel_id, title)
-            else:
-                report_parts.append(f"Could not find channel: {html.bold(name)}")
-                continue
+    # Send initial status
+    status_msg = await message.answer(f"🔍 Searching for {len(args)} channels...")
 
-        channel_id, title = channel_info
-        # Default to VODs
-        part = await fetch_data_for_channel(db, client, channel_id, title, "VODs")
-        report_parts.append(part)
+    # Show typing action
+    async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+        # 1. Resolve all channels concurrently
+        resolve_tasks = [service.resolve_channel(name) for name in args]
+        resolved_results = await asyncio.gather(*resolve_tasks)
 
-    if not report_parts:
-        await message.answer("No valid channels found.")
-        return
+        valid_channels = [r for r in resolved_results if r is not None]
+        missing_channels = [args[i] for i, r in enumerate(resolved_results) if r is None]
 
-    full_response = "\n\n".join(report_parts)
-    await message.answer(full_response, reply_markup=get_keyboard("VODs"))
+        if not valid_channels:
+            await status_msg.edit_text("❌ No valid channels found.")
+            return
+
+        # 2. Fetch data for valid channels concurrently (Default VODs)
+        fetch_tasks = [
+            service.fetch_data_for_channel(c_id, c_title, "VODs")
+            for c_id, c_title, _ in valid_channels
+        ]
+        reports = await asyncio.gather(*fetch_tasks)
+
+        # Save state for this message
+        state_data = [{'id': c_id, 'title': c_title} for c_id, c_title, _ in valid_channels]
+        await db.save_message_state(message.chat.id, status_msg.message_id, state_data)
+
+        # Construct response
+        full_response_parts = reports
+        if missing_channels:
+            full_response_parts.append("\n⚠️ " + html.bold("Not found: ") + ", ".join(missing_channels))
+
+        full_response = "\n\n".join(full_response_parts)
+
+        # Edit the status message with result
+        parts = split_text(full_response)
+
+        if not parts:
+            await status_msg.delete()
+            return
+
+        # Edit first part
+        await status_msg.edit_text(parts[0], reply_markup=get_keyboard("VODs") if len(parts) == 1 else None)
+
+        # Send remaining parts
+        for i, part in enumerate(parts[1:], 1):
+            is_last = i == len(parts) - 1
+            await message.answer(part, reply_markup=get_keyboard("VODs") if is_last else None)
 
 @router.callback_query(F.data.startswith("mode:"))
 async def on_mode_switch(callback: CallbackQuery, db: Database, client: YoutubeClient):
     target_mode = "Shorts" if callback.data == "mode:short" else "VODs"
     message = callback.message
 
-    # Extract channel IDs from entities (links)
-    if not message.entities:
-        await callback.answer("No channels found in message.")
-        return
+    # Retrieve state from DB
+    channel_ids = await db.get_message_state(message.chat.id, message.message_id)
 
-    channel_ids = []
-    for entity in message.entities:
-        if entity.type == "text_link" and "youtube.com/channel/" in entity.url:
-            # Extract ID
-            match = re.search(r"youtube\.com/channel/([^/]+)", entity.url)
-            if match:
-                channel_ids.append(match.group(1))
-
-    # We also need titles. But titles are in the text.
-    # Parsing title is harder. But wait, `fetch_data_for_channel` needs title.
-    # The title is the text covered by the link.
-    # Let's extract (id, title) pairs.
-
-    channels = []
-    text = message.html_text if hasattr(message, 'html_text') else message.text
-    # message.text gives plain text. message.html_text is not standard attribute but we can reconstruct or use entities with text.
-    # message.text + entities indices.
-
-    for entity in message.entities:
-        if entity.type == "text_link" and "youtube.com/channel/" in entity.url:
-            match = re.search(r"youtube\.com/channel/([^/]+)", entity.url)
-            if match:
-                c_id = match.group(1)
-
-                # Extract title from text using offset/length
-                # Python strings are weird with offsets if emojis are present, but aiogram helps.
-                # Actually, simpler:
-                start = entity.offset
-                end = start + entity.length
-                # title = message.text[start:end] # This might fail with surrogates.
-                # Correct way using utf16 decode/encode trick or just trusting python slice if no special chars.
-                # Let's try simple slice first.
-                title = message.text[start:end]
-                channels.append((c_id, title))
-
-    if not channels:
-        await callback.answer("Could not parse channels.")
+    if not channel_ids:
+        await callback.answer("Session expired or invalid.", show_alert=True)
         return
 
     await callback.answer(f"Switching to {target_mode}...")
 
-    report_parts = []
-    for c_id, c_title in channels:
-        part = await fetch_data_for_channel(db, client, c_id, c_title, target_mode)
-        report_parts.append(part)
+    service = ChannelService(db, client)
+    channels_data = channel_ids
 
-    full_response = "\n\n".join(report_parts)
+    async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+        tasks = []
+        for c_data in channels_data:
+            if isinstance(c_data, str):
+                c_id = c_data
+                c_title = "Channel"
+            else:
+                c_id = c_data['id']
+                c_title = c_data['title']
 
-    try:
-        await message.edit_text(full_response, reply_markup=get_keyboard(target_mode))
-    except Exception as e:
-        # sometimes 'message is not modified' error
-        pass
+            tasks.append(service.fetch_data_for_channel(c_id, c_title, target_mode))
+
+        reports = await asyncio.gather(*tasks)
+
+        full_response = "\n\n".join(reports)
+
+        parts = split_text(full_response)
+        if not parts:
+            return
+
+        try:
+            # If split, we can't easily edit a single message into multiple.
+            # Best effort: Edit current message with first part, send new messages for others.
+            # However, this might spam if toggled repeatedly.
+            # For simplicity in this iteration: Edit the message with the first chunk.
+            # If it's too long, we truncate? Or send next chunks.
+            # Ideally: Edit first, send rest.
+
+            await message.edit_text(parts[0], reply_markup=get_keyboard(target_mode) if len(parts) == 1 else None)
+
+            for i, part in enumerate(parts[1:], 1):
+                is_last = i == len(parts) - 1
+                await message.answer(part, reply_markup=get_keyboard(target_mode) if is_last else None)
+
+        except Exception:
+            pass

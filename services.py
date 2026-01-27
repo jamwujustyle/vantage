@@ -1,0 +1,84 @@
+import asyncio
+from aiogram import html
+from database import Database
+from youtube_client import YoutubeClient, Video
+from datetime import datetime, timezone
+from utils import format_number
+
+def time_ago(dt: datetime) -> str:
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    diff = now - dt
+
+    if diff.days > 365:
+        return f"{diff.days // 365}y ago"
+    elif diff.days > 30:
+        return f"{diff.days // 30}mo ago"
+    elif diff.days > 0:
+        return f"{diff.days}d ago"
+    elif diff.seconds > 3600:
+        return f"{diff.seconds // 3600}h ago"
+    else:
+        return "Just now"
+
+class ChannelService:
+    def __init__(self, db: Database, client: YoutubeClient):
+        self.db = db
+        self.client = client
+
+    async def resolve_channel(self, name: str) -> tuple[str, str, str] | None:
+        """Returns (channel_id, title, original_name) or None."""
+        channel_info = await self.db.get_channel_id(name)
+        if channel_info:
+            return channel_info[0], channel_info[1], name
+
+        found = await self.client.search_channel(name)
+        if found:
+            channel_id, title = found
+            await self.db.set_channel_id(name, channel_id, title)
+            return channel_id, title, name
+        return None
+
+    async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> str:
+        cache_key = f"{'shorts' if mode == 'Shorts' else 'vods'}:{channel_id}"
+
+        # Try cache
+        cached_data = await self.db.get_cache(cache_key)
+        if cached_data:
+            videos = [Video(**v) for v in cached_data]
+            return self.generate_report(channel_title, channel_id, videos, mode)
+
+        # Fetch from API
+        if mode == "Shorts":
+            videos = await self.client.get_shorts(channel_id)
+        else:
+            videos = await self.client.get_vods(channel_id)
+
+        # Save to cache
+        await self.db.set_cache(cache_key, [v.model_dump(mode='json') for v in videos])
+
+        return self.generate_report(channel_title, channel_id, videos, mode)
+
+    def generate_report(self, channel_title: str, channel_id: str, videos: list[Video], mode: str) -> str:
+        safe_title = html.quote(channel_title)
+        header = html.bold(html.link(safe_title, f"https://www.youtube.com/channel/{channel_id}"))
+        lines = [header]
+
+        if not videos:
+            lines.append(f"<i>No {mode}s found or accessible.</i>")
+        else:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, video in enumerate(videos):
+                rank_icon = medals[i] if i < 3 else f"{i+1}."
+                safe_video_title = html.quote(video.title)
+
+                # Format: 🥇 <Link>
+                #         👁️ 1.5M • 2d ago
+                line_1 = f"{rank_icon} {html.link(safe_video_title, video.url)}"
+                line_2 = f"   👁️ {format_number(video.view_count)} • {time_ago(video.published_at)}"
+
+                lines.append(line_1)
+                lines.append(line_2)
+
+        return "\n".join(lines)

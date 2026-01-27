@@ -4,36 +4,58 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-from config import BOT_TOKEN, YOUTUBE_API_KEY
+from config import settings
 from database import Database
 from youtube_client import YoutubeClient
 from handlers import router
+from middlewares import LoggingMiddleware, ThrottlingMiddleware
 
 logging.basicConfig(level=logging.INFO)
 
-async def main():
-    if not BOT_TOKEN or not YOUTUBE_API_KEY:
-        logging.error("BOT_TOKEN or YOUTUBE_API_KEY is missing in environment variables.")
-        return
+async def cache_pruner(db: Database):
+    while True:
+        await asyncio.sleep(3600)  # Run every hour
+        try:
+            await db.prune_cache()
+            logging.info("Cache pruned.")
+        except Exception as e:
+            logging.error(f"Error pruning cache: {e}")
 
+async def on_startup(bot: Bot, db: Database, client: YoutubeClient):
+    await db.init_db()
+    # Start background tasks
+    asyncio.create_task(cache_pruner(db))
+    logging.info("Bot started.")
+
+async def on_shutdown(bot: Bot, db: Database, client: YoutubeClient):
+    await db.close()
+    client.close()
+    logging.info("Bot stopped.")
+
+async def main():
     # Initialize dependencies
     db = Database()
-    await db.init_db()
-
-    client = YoutubeClient(api_key=YOUTUBE_API_KEY)
+    client = YoutubeClient(api_key=settings.YOUTUBE_API_KEY)
 
     # Initialize Bot and Dispatcher
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    # Inject dependencies into handlers
-    dp["db"] = db
-    dp["client"] = client
+    # Inject dependencies via workflow_data
+    dp.workflow_data.update({"db": db, "client": client})
+
+    # Register events
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    # Register middlewares
+    dp.update.middleware(LoggingMiddleware())
+    dp.message.middleware(ThrottlingMiddleware())
 
     # Register routers
     dp.include_router(router)
 
-    logging.info("Starting bot...")
+    logging.info("Starting polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
