@@ -43,11 +43,14 @@ class YoutubeClient:
             return snippet['channelId'], snippet['channelTitle']
         except HttpError as e:
             print(f"Error searching channel {name}: {e}")
+            # Raise or let caller handle None? None is fine for "not found".
+            # For API errors, logging is key.
             return None
 
     async def get_vods(self, channel_id: str) -> List[Video]:
         """
         Fetches top 3 most watched VODs from the last 50 uploads.
+        Returns empty list on API error or no videos.
         """
         # Convert UC to UU
         if channel_id.startswith('UC'):
@@ -96,6 +99,8 @@ class YoutubeClient:
 
         except HttpError as e:
             print(f"Error fetching VODs for {channel_id}: {e}")
+            # In a production bot, we might want to signal this error to the user.
+            # But adhering to the interface returning List[Video], empty list is safest fallback.
             return []
 
     async def get_shorts(self, channel_id: str) -> List[Video]:

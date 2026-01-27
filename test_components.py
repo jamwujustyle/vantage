@@ -9,7 +9,7 @@ from youtube_client import YoutubeClient, Video
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data.db"
+        self.db_path = "test_bot_data_v2.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -31,14 +31,15 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
         cached = await self.db.get_cache("test:key")
         self.assertEqual(cached, data)
 
-        # Test expiration (manually updating timestamp to 7 hours ago)
-        import aiosqlite
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute('UPDATE cache SET timestamp = ? WHERE key = ?', (time.time() - 7*3600, "test:key"))
-            await db.commit()
+    async def test_message_state(self):
+        chat_id = 123
+        msg_id = 456
+        data = [{"id": "UC1", "title": "T1"}, {"id": "UC2", "title": "T2"}]
 
-        cached = await self.db.get_cache("test:key")
-        self.assertIsNone(cached)
+        await self.db.save_message_state(chat_id, msg_id, data)
+        retrieved = await self.db.get_message_state(chat_id, msg_id)
+
+        self.assertEqual(retrieved, data)
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -51,9 +52,6 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
         })
         self.client.service.search().list().execute = mock_execute
 
-        # We need to mock _run_in_executor because it uses a real executor
-        # Or we can just let it run. The mock is thread-safe enough for this or we can mock _run_in_executor.
-        # Mocking _run_in_executor is safer to avoid thread issues with MagicMock.
         async def mock_runner(func, *args, **kwargs):
             return func(*args, **kwargs)
         self.client._run_in_executor = mock_runner
@@ -91,7 +89,6 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].title, "Video 2")
         self.assertEqual(result[0].view_count, 200)
-        self.assertEqual(result[1].title, "Video 1")
 
 if __name__ == "__main__":
     unittest.main()

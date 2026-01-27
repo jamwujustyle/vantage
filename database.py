@@ -23,7 +23,34 @@ class Database:
                     timestamp REAL NOT NULL
                 )
             ''')
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS message_state (
+                    chat_id INTEGER,
+                    message_id INTEGER,
+                    channel_ids TEXT,
+                    PRIMARY KEY (chat_id, message_id)
+                )
+            ''')
             await db.commit()
+
+    async def save_message_state(self, chat_id: int, message_id: int, channel_ids: list[str]):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                'INSERT OR REPLACE INTO message_state (chat_id, message_id, channel_ids) VALUES (?, ?, ?)',
+                (chat_id, message_id, json.dumps(channel_ids))
+            )
+            await db.commit()
+
+    async def get_message_state(self, chat_id: int, message_id: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                'SELECT channel_ids FROM message_state WHERE chat_id = ? AND message_id = ?',
+                (chat_id, message_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return json.loads(row[0])
+        return None
 
     async def get_channel_id(self, name: str):
         async with aiosqlite.connect(self.db_path) as db:
