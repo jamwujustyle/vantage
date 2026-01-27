@@ -17,6 +17,18 @@ def get_keyboard(current_mode: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"Switch to {target_mode}", callback_data=callback_data)]
     ])
 
+@router.message(Command("start", "help"))
+async def cmd_welcome(message: Message):
+    text = (
+        f"👋 <b>Welcome to YT-Vantage!</b>\n\n"
+        f"I can help you compare the most popular videos of your favorite YouTubers.\n\n"
+        f"<b>Commands:</b>\n"
+        f"• /compare [channel1] [channel2] ... — Compare top 3 VODs/Shorts.\n"
+        f"  <i>Example:</i> <code>/compare PewDiePie \"MrBeast Gaming\"</code>\n\n"
+        f"I support quotes for names with spaces!"
+    )
+    await message.answer(text)
+
 @router.message(Command("compare"))
 async def cmd_compare(message: Message, db: Database, client: YoutubeClient):
     args = parse_compare_args(message.text)

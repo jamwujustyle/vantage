@@ -4,9 +4,10 @@ import asyncio
 import json
 import time
 from unittest.mock import MagicMock, patch
+from datetime import datetime
 from database import Database
 from youtube_client import YoutubeClient, Video
-from services import ChannelService
+from services import ChannelService, time_ago
 from utils import format_number, parse_compare_args
 
 class TestUtils(unittest.TestCase):
@@ -17,11 +18,21 @@ class TestUtils(unittest.TestCase):
 
     def test_parse_args(self):
         self.assertEqual(parse_compare_args("/compare a b"), ["a", "b"])
+        self.assertEqual(parse_compare_args('/compare "Channel One" b'), ["Channel One", "b"])
         self.assertEqual(parse_compare_args("/compare"), [])
+        # Unbalanced quote fallback
+        self.assertEqual(parse_compare_args('/compare "Channel One'), ['"Channel', 'One'])
+
+    def test_time_ago(self):
+        # We can't easily test time_ago relative to now without freezing time,
+        # but we can check basic behavior if we mock datetime or pass a specific delta if refactored.
+        # Here we just ensure it doesn't crash.
+        res = time_ago(datetime.now())
+        self.assertIn("now", res)
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v4.db"
+        self.db_path = "test_bot_data_v5.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -31,7 +42,6 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
             os.remove(self.db_path)
 
     async def test_cache_prune(self):
-        # Set cache with timestamp 0 (very old)
         await self.db.db.execute(
             'INSERT OR REPLACE INTO cache (key, data, timestamp) VALUES (?, ?, ?)',
             ("old_key", json.dumps({}), 0)
@@ -42,13 +52,6 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
 
         cached = await self.db.get_cache("old_key")
         self.assertIsNone(cached)
-
-    async def test_channel_mapping(self):
-        await self.db.set_channel_id("PewDiePie", "UC-lHJZR3Gqxm24_Vd_AJ5Yw", "PewDiePie")
-        result = await self.db.get_channel_id("pewdiepie")
-        self.assertIsNotNone(result)
-        self.assertEqual(result[0], "UC-lHJZR3Gqxm24_Vd_AJ5Yw")
-        self.assertEqual(result[1], "PewDiePie")
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

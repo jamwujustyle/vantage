@@ -1,3 +1,4 @@
+import shlex
 from typing import List
 
 def format_number(num: int) -> str:
@@ -10,7 +11,12 @@ def format_number(num: int) -> str:
 
 def parse_compare_args(text: str) -> List[str]:
     """Parses arguments from the /compare command text."""
-    parts = text.split()
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        # Fallback for unbalanced quotes
+        parts = text.split()
+
     if len(parts) < 2:
         return []
     return parts[1:]

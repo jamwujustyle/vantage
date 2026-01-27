@@ -25,6 +25,7 @@ class ThrottlingMiddleware(BaseMiddleware):
     def __init__(self, limit: float = 2.0):
         self.limit = limit
         self.last_requests = {}
+        self.last_warnings = {}
 
     async def __call__(
         self,
@@ -36,12 +37,17 @@ class ThrottlingMiddleware(BaseMiddleware):
         if user:
             now = time.time()
             last_request = self.last_requests.get(user.id, 0)
+
             if now - last_request < self.limit:
                 # Throttled
                 if isinstance(event, Message):
-                    # Ideally we don't reply to every throttled message to avoid spam
-                    pass
-                # Stop processing
+                    last_warning = self.last_warnings.get(user.id, 0)
+                    if now - last_warning > 5.0: # Warn max once every 5 seconds
+                        try:
+                            await event.answer("⚠️ You are sending commands too fast. Please slow down.")
+                            self.last_warnings[user.id] = now
+                        except Exception:
+                            pass
                 return
 
             self.last_requests[user.id] = now

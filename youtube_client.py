@@ -7,12 +7,15 @@ from googleapiclient.errors import HttpError
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
 
+from datetime import datetime
+
 class Video(BaseModel):
     title: str
     view_count: int
     url: str
     video_id: str
     type: str  # 'VOD' or 'Short'
+    published_at: datetime
 
 def retry_async(max_retries=3, delay=1.0, backoff=2.0):
     def decorator(func):
@@ -112,12 +115,20 @@ class YoutubeClient:
                 stats = item.get('statistics', {})
                 snippet = item.get('snippet', {})
                 view_count = int(stats.get('viewCount', 0))
+                published_at_str = snippet.get('publishedAt')
+                # format: 2023-10-27T10:00:00Z
+                try:
+                    published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    published_at = datetime.now() # Fallback
+
                 videos.append(Video(
                     title=snippet.get('title', 'Unknown'),
                     view_count=view_count,
                     url=f"https://www.youtube.com/watch?v={item['id']}",
                     video_id=item['id'],
-                    type='VOD'
+                    type='VOD',
+                    published_at=published_at
                 ))
 
             # Sort by view count desc and take top 3
@@ -165,12 +176,19 @@ class YoutubeClient:
                 stats = item.get('statistics', {})
                 snippet = item.get('snippet', {})
                 view_count = int(stats.get('viewCount', 0))
+                published_at_str = snippet.get('publishedAt')
+                try:
+                    published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    published_at = datetime.now() # Fallback
+
                 videos.append(Video(
                     title=snippet.get('title', 'Unknown'),
                     view_count=view_count,
                     url=f"https://www.youtube.com/shorts/{item['id']}",
                     video_id=item['id'],
-                    type='Short'
+                    type='Short',
+                    published_at=published_at
                 ))
 
             # Sort again just in case (though API should have sorted it)
