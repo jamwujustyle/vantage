@@ -2,13 +2,7 @@ import asyncio
 from aiogram import html
 from database import Database
 from youtube_client import YoutubeClient, Video
-
-def format_number(num: int) -> str:
-    if num >= 1_000_000:
-        return f"{num / 1_000_000:.1f}M"
-    elif num >= 1_000:
-        return f"{num / 1_000:.1f}K"
-    return str(num)
+from utils import format_number
 
 class ChannelService:
     def __init__(self, db: Database, client: YoutubeClient):

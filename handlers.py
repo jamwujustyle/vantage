@@ -6,6 +6,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from database import Database
 from youtube_client import YoutubeClient
 from services import ChannelService
+from utils import parse_compare_args
 
 router = Router()
 
@@ -18,7 +19,7 @@ def get_keyboard(current_mode: str) -> InlineKeyboardMarkup:
 
 @router.message(Command("compare"))
 async def cmd_compare(message: Message, db: Database, client: YoutubeClient):
-    args = message.text.split()[1:]
+    args = parse_compare_args(message.text)
     if not args:
         await message.answer("Usage: /compare [blogger1] [blogger2] ...")
         return

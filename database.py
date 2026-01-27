@@ -83,3 +83,9 @@ class Database:
             (key, json.dumps(data), time.time())
         )
         await self.db.commit()
+
+    async def prune_cache(self, ttl: int = 6 * 3600):
+        """Removes cache entries older than TTL seconds."""
+        cutoff = time.time() - ttl
+        await self.db.execute('DELETE FROM cache WHERE timestamp < ?', (cutoff,))
+        await self.db.commit()

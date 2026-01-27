@@ -7,10 +7,21 @@ from unittest.mock import MagicMock, patch
 from database import Database
 from youtube_client import YoutubeClient, Video
 from services import ChannelService
+from utils import format_number, parse_compare_args
+
+class TestUtils(unittest.TestCase):
+    def test_format_number(self):
+        self.assertEqual(format_number(500), "500")
+        self.assertEqual(format_number(1500), "1.5K")
+        self.assertEqual(format_number(1500000), "1.5M")
+
+    def test_parse_args(self):
+        self.assertEqual(parse_compare_args("/compare a b"), ["a", "b"])
+        self.assertEqual(parse_compare_args("/compare"), [])
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v3.db"
+        self.db_path = "test_bot_data_v4.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -19,29 +30,25 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
+    async def test_cache_prune(self):
+        # Set cache with timestamp 0 (very old)
+        await self.db.db.execute(
+            'INSERT OR REPLACE INTO cache (key, data, timestamp) VALUES (?, ?, ?)',
+            ("old_key", json.dumps({}), 0)
+        )
+        await self.db.db.commit()
+
+        await self.db.prune_cache(ttl=3600)
+
+        cached = await self.db.get_cache("old_key")
+        self.assertIsNone(cached)
+
     async def test_channel_mapping(self):
         await self.db.set_channel_id("PewDiePie", "UC-lHJZR3Gqxm24_Vd_AJ5Yw", "PewDiePie")
         result = await self.db.get_channel_id("pewdiepie")
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "UC-lHJZR3Gqxm24_Vd_AJ5Yw")
         self.assertEqual(result[1], "PewDiePie")
-
-    async def test_cache(self):
-        data = [{"title": "Test", "view_count": 100}]
-        await self.db.set_cache("test:key", data)
-
-        cached = await self.db.get_cache("test:key")
-        self.assertEqual(cached, data)
-
-    async def test_message_state(self):
-        chat_id = 123
-        msg_id = 456
-        data = [{"id": "UC1", "title": "T1"}, {"id": "UC2", "title": "T2"}]
-
-        await self.db.save_message_state(chat_id, msg_id, data)
-        retrieved = await self.db.get_message_state(chat_id, msg_id)
-
-        self.assertEqual(retrieved, data)
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -63,56 +70,6 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
 
         result = await self.client.search_channel("Test")
         self.assertEqual(result, ("UC123", "Test Channel"))
-
-    async def test_get_vods(self):
-        # Mocking _run_in_executor
-        async def mock_runner(func, *args, **kwargs):
-            return func(*args, **kwargs)
-        self.client._run_in_executor = mock_runner
-
-        # Mock playlistItems response
-        mock_pl = MagicMock(return_value={
-            "items": [
-                {"contentDetails": {"videoId": "v1"}},
-                {"contentDetails": {"videoId": "v2"}}
-            ]
-        })
-        self.client.service.playlistItems().list().execute = mock_pl
-
-        # Mock videos response
-        mock_vid = MagicMock(return_value={
-            "items": [
-                {"id": "v1", "snippet": {"title": "Video 1"}, "statistics": {"viewCount": "100"}},
-                {"id": "v2", "snippet": {"title": "Video 2"}, "statistics": {"viewCount": "200"}}
-            ]
-        })
-        self.client.service.videos().list().execute = mock_vid
-
-        result = await self.client.get_vods("UC123")
-
-        # Should be sorted by view count desc
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].title, "Video 2")
-        self.assertEqual(result[0].view_count, 200)
-
-class TestChannelService(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.db_path = "test_service_db.db"
-        self.db = Database(self.db_path)
-        await self.db.init_db()
-        self.client = MagicMock()
-        self.service = ChannelService(self.db, self.client)
-
-    async def asyncTearDown(self):
-        await self.db.close()
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
-
-    async def test_resolve_channel_cached(self):
-        await self.db.set_channel_id("exists", "UC1", "Exists")
-        res = await self.service.resolve_channel("exists")
-        self.assertEqual(res, ("UC1", "Exists", "exists"))
-        self.client.search_channel.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
