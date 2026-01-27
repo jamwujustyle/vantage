@@ -2,25 +2,7 @@ import asyncio
 from aiogram import html
 from database import Database
 from youtube_client import YoutubeClient, Video
-from datetime import datetime, timezone
-from utils import format_number
-
-def time_ago(dt: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    diff = now - dt
-
-    if diff.days > 365:
-        return f"{diff.days // 365}y ago"
-    elif diff.days > 30:
-        return f"{diff.days // 30}mo ago"
-    elif diff.days > 0:
-        return f"{diff.days}d ago"
-    elif diff.seconds > 3600:
-        return f"{diff.seconds // 3600}h ago"
-    else:
-        return "Just now"
+from utils import format_number, time_ago
 
 class ChannelService:
     def __init__(self, db: Database, client: YoutubeClient):
@@ -29,6 +11,10 @@ class ChannelService:
 
     async def resolve_channel(self, name: str) -> tuple[str, str, str] | None:
         """Returns (channel_id, title, original_name) or None."""
+        # Check negative cache (1 hour TTL)
+        if await self.db.get_cache(f"not_found:{name.lower()}", ttl=3600):
+            return None
+
         channel_info = await self.db.get_channel_id(name)
         if channel_info:
             return channel_info[0], channel_info[1], name
@@ -38,6 +24,9 @@ class ChannelService:
             channel_id, title = found
             await self.db.set_channel_id(name, channel_id, title)
             return channel_id, title, name
+
+        # Cache negative result
+        await self.db.set_cache(f"not_found:{name.lower()}", {"found": False})
         return None
 
     async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> str:

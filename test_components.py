@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime
 from database import Database
 from youtube_client import YoutubeClient, Video
-from services import ChannelService, time_ago
-from utils import format_number, parse_compare_args, split_text
+from services import ChannelService
+from utils import format_number, parse_compare_args, split_text, time_ago
 
 class TestUtils(unittest.TestCase):
     def test_format_number(self):
@@ -51,6 +51,24 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
 
         cached = await self.db.get_cache("old_key")
         self.assertIsNone(cached)
+
+    async def test_cache_ttl(self):
+        # Set cache with timestamp 0
+        await self.db.set_cache("key", {})
+        # Manually update timestamp to 2 hours ago
+        await self.db.db.execute(
+            'UPDATE cache SET timestamp = ? WHERE key = ?',
+            (time.time() - 7200, "key")
+        )
+        await self.db.db.commit()
+
+        # Should exist with 3h TTL
+        res = await self.db.get_cache("key", ttl=3*3600)
+        self.assertIsNotNone(res)
+
+        # Should not exist with 1h TTL
+        res = await self.db.get_cache("key", ttl=3600)
+        self.assertIsNone(res)
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

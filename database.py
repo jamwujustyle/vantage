@@ -67,13 +67,13 @@ class Database:
         )
         await self.db.commit()
 
-    async def get_cache(self, key: str):
-        """Returns cached data if valid (less than 6 hours old), else None."""
+    async def get_cache(self, key: str, ttl: int = 6 * 3600):
+        """Returns cached data if valid (less than TTL seconds old), else None."""
         async with self.db.execute('SELECT data, timestamp FROM cache WHERE key = ?', (key,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 data_json, timestamp = row
-                if time.time() - timestamp < 6 * 3600:
+                if time.time() - timestamp < ttl:
                     return json.loads(data_json)
         return None
 
