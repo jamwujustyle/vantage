@@ -6,7 +6,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from database import Database
 from youtube_client import YoutubeClient
 from services import ChannelService
-from utils import parse_compare_args
+from utils import parse_compare_args, split_text
 
 router = Router()
 
@@ -73,7 +73,19 @@ async def cmd_compare(message: Message, db: Database, client: YoutubeClient):
         full_response = "\n\n".join(full_response_parts)
 
         # Edit the status message with result
-        await status_msg.edit_text(full_response, reply_markup=get_keyboard("VODs"))
+        parts = split_text(full_response)
+
+        if not parts:
+            await status_msg.delete()
+            return
+
+        # Edit first part
+        await status_msg.edit_text(parts[0], reply_markup=get_keyboard("VODs") if len(parts) == 1 else None)
+
+        # Send remaining parts
+        for i, part in enumerate(parts[1:], 1):
+            is_last = i == len(parts) - 1
+            await message.answer(part, reply_markup=get_keyboard("VODs") if is_last else None)
 
 @router.callback_query(F.data.startswith("mode:"))
 async def on_mode_switch(callback: CallbackQuery, db: Database, client: YoutubeClient):
@@ -108,7 +120,23 @@ async def on_mode_switch(callback: CallbackQuery, db: Database, client: YoutubeC
 
         full_response = "\n\n".join(reports)
 
+        parts = split_text(full_response)
+        if not parts:
+            return
+
         try:
-            await message.edit_text(full_response, reply_markup=get_keyboard(target_mode))
+            # If split, we can't easily edit a single message into multiple.
+            # Best effort: Edit current message with first part, send new messages for others.
+            # However, this might spam if toggled repeatedly.
+            # For simplicity in this iteration: Edit the message with the first chunk.
+            # If it's too long, we truncate? Or send next chunks.
+            # Ideally: Edit first, send rest.
+
+            await message.edit_text(parts[0], reply_markup=get_keyboard(target_mode) if len(parts) == 1 else None)
+
+            for i, part in enumerate(parts[1:], 1):
+                is_last = i == len(parts) - 1
+                await message.answer(part, reply_markup=get_keyboard(target_mode) if is_last else None)
+
         except Exception:
             pass

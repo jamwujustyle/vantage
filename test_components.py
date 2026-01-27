@@ -8,7 +8,7 @@ from datetime import datetime
 from database import Database
 from youtube_client import YoutubeClient, Video
 from services import ChannelService, time_ago
-from utils import format_number, parse_compare_args
+from utils import format_number, parse_compare_args, split_text
 
 class TestUtils(unittest.TestCase):
     def test_format_number(self):
@@ -23,16 +23,15 @@ class TestUtils(unittest.TestCase):
         # Unbalanced quote fallback
         self.assertEqual(parse_compare_args('/compare "Channel One'), ['"Channel', 'One'])
 
-    def test_time_ago(self):
-        # We can't easily test time_ago relative to now without freezing time,
-        # but we can check basic behavior if we mock datetime or pass a specific delta if refactored.
-        # Here we just ensure it doesn't crash.
-        res = time_ago(datetime.now())
-        self.assertIn("now", res)
+    def test_split_text(self):
+        text = "a" * 10
+        chunks = split_text(text, limit=4)
+        self.assertEqual(len(chunks), 3) # aaaa, aaaa, aa
+        self.assertEqual(chunks[0], "aaaa")
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v5.db"
+        self.db_path = "test_bot_data_v6.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 

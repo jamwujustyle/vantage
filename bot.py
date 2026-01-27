@@ -21,11 +21,20 @@ async def cache_pruner(db: Database):
         except Exception as e:
             logging.error(f"Error pruning cache: {e}")
 
+async def on_startup(bot: Bot, db: Database, client: YoutubeClient):
+    await db.init_db()
+    # Start background tasks
+    asyncio.create_task(cache_pruner(db))
+    logging.info("Bot started.")
+
+async def on_shutdown(bot: Bot, db: Database, client: YoutubeClient):
+    await db.close()
+    client.close()
+    logging.info("Bot stopped.")
+
 async def main():
     # Initialize dependencies
     db = Database()
-    await db.init_db()
-
     client = YoutubeClient(api_key=settings.YOUTUBE_API_KEY)
 
     # Initialize Bot and Dispatcher
@@ -35,6 +44,10 @@ async def main():
     # Inject dependencies via workflow_data
     dp.workflow_data.update({"db": db, "client": client})
 
+    # Register events
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
     # Register middlewares
     dp.update.middleware(LoggingMiddleware())
     dp.message.middleware(ThrottlingMiddleware())
@@ -42,15 +55,8 @@ async def main():
     # Register routers
     dp.include_router(router)
 
-    # Start background tasks
-    asyncio.create_task(cache_pruner(db))
-
-    logging.info("Starting bot...")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await db.close()
-        client.close()
+    logging.info("Starting polling...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
