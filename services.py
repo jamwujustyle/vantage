@@ -11,13 +11,20 @@ class ChannelService:
 
     async def resolve_channel(self, name: str) -> tuple[str, str, str] | None:
         """Returns (channel_id, title, original_name) or None."""
+        import time
+
         # Check negative cache (1 hour TTL)
         if await self.db.get_cache(f"not_found:{name.lower()}", ttl=3600):
             return None
 
         channel_info = await self.db.get_channel_id(name)
         if channel_info:
-            return channel_info[0], channel_info[1], name
+            # Check staleness (30 days = 2592000s)
+            c_id, title, last_updated = channel_info
+            # Handle migration where last_updated might be None
+            if last_updated and (time.time() - last_updated < 2592000):
+                return c_id, title, name
+            # Else fall through to refresh
 
         found = await self.client.search_channel(name)
         if found:
@@ -35,6 +42,8 @@ class ChannelService:
         # Try cache
         cached_data = await self.db.get_cache(cache_key)
         if cached_data:
+            # Check if cached data is a valid list (it could be empty list for 'no videos')
+            # Assuming cache stores lists.
             videos = [Video(**v) for v in cached_data]
             return self.generate_report(channel_title, channel_id, videos, mode), videos
 
@@ -43,6 +52,10 @@ class ChannelService:
             videos = await self.client.get_shorts(channel_id)
         else:
             videos = await self.client.get_vods(channel_id)
+
+        if videos is None:
+            # API Error
+            return f"⚠️ Could not fetch {mode} for <b>{html.quote(channel_title)}</b> (API Error).", []
 
         # Save to cache
         await self.db.set_cache(cache_key, [v.model_dump(mode='json') for v in videos])

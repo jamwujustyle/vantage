@@ -144,9 +144,7 @@ class YoutubeClient:
 
         except HttpError as e:
             print(f"Error fetching VODs for {channel_id}: {e}")
-            # In a production bot, we might want to signal this error to the user.
-            # But adhering to the interface returning List[Video], empty list is safest fallback.
-            return []
+            return None # None indicates API error
 
     @retry_async()
     async def get_shorts(self, channel_id: str) -> List[Video]:
@@ -209,4 +207,4 @@ class YoutubeClient:
 
         except HttpError as e:
             print(f"Error fetching Shorts for {channel_id}: {e}")
-            return []
+            return None # None indicates API error

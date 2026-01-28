@@ -14,9 +14,16 @@ class Database:
             CREATE TABLE IF NOT EXISTS channel_map (
                 name TEXT PRIMARY KEY,
                 channel_id TEXT NOT NULL,
-                title TEXT NOT NULL
+                title TEXT NOT NULL,
+                last_updated REAL
             )
         ''')
+        # Check if last_updated column exists (for migration)
+        try:
+            await self.db.execute('SELECT last_updated FROM channel_map LIMIT 1')
+        except aiosqlite.OperationalError:
+            await self.db.execute('ALTER TABLE channel_map ADD COLUMN last_updated REAL')
+
         await self.db.execute('''
             CREATE TABLE IF NOT EXISTS cache (
                 key TEXT PRIMARY KEY,
@@ -30,6 +37,14 @@ class Database:
                 message_id INTEGER,
                 channel_ids TEXT,
                 PRIMARY KEY (chat_id, message_id)
+            )
+        ''')
+        await self.db.execute('''
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id INTEGER,
+                channel_id TEXT,
+                title TEXT,
+                PRIMARY KEY (user_id, channel_id)
             )
         ''')
         await self.db.commit()
@@ -56,14 +71,15 @@ class Database:
         return None
 
     async def get_channel_id(self, name: str):
-        async with self.db.execute('SELECT channel_id, title FROM channel_map WHERE name = ?', (name.lower(),)) as cursor:
+        """Returns (channel_id, title, last_updated)."""
+        async with self.db.execute('SELECT channel_id, title, last_updated FROM channel_map WHERE name = ?', (name.lower(),)) as cursor:
             row = await cursor.fetchone()
             return row if row else None
 
     async def set_channel_id(self, name: str, channel_id: str, title: str):
         await self.db.execute(
-            'INSERT OR REPLACE INTO channel_map (name, channel_id, title) VALUES (?, ?, ?)',
-            (name.lower(), channel_id, title)
+            'INSERT OR REPLACE INTO channel_map (name, channel_id, title, last_updated) VALUES (?, ?, ?, ?)',
+            (name.lower(), channel_id, title, time.time())
         )
         await self.db.commit()
 
@@ -83,6 +99,32 @@ class Database:
             (key, json.dumps(data), time.time())
         )
         await self.db.commit()
+
+    async def add_favorite(self, user_id: int, channel_id: str, title: str):
+        await self.db.execute(
+            'INSERT OR REPLACE INTO favorites (user_id, channel_id, title) VALUES (?, ?, ?)',
+            (user_id, channel_id, title)
+        )
+        await self.db.commit()
+
+    async def remove_favorite(self, user_id: int, channel_id: str):
+        await self.db.execute(
+            'DELETE FROM favorites WHERE user_id = ? AND channel_id = ?',
+            (user_id, channel_id)
+        )
+        await self.db.commit()
+
+    async def get_favorites(self, user_id: int):
+        async with self.db.execute(
+            'SELECT channel_id, title FROM favorites WHERE user_id = ?', (user_id,)
+        ) as cursor:
+            return await cursor.fetchall()
+
+    async def is_favorite(self, user_id: int, channel_id: str) -> bool:
+        async with self.db.execute(
+            'SELECT 1 FROM favorites WHERE user_id = ? AND channel_id = ?', (user_id, channel_id)
+        ) as cursor:
+            return await cursor.fetchone() is not None
 
     async def prune_cache(self, ttl: int = 6 * 3600):
         """Removes cache entries older than TTL seconds."""

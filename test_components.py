@@ -36,7 +36,7 @@ class TestUtils(unittest.TestCase):
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v7.db"
+        self.db_path = "test_bot_data_v9.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -58,22 +58,43 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(cached)
 
     async def test_cache_ttl(self):
-        # Set cache with timestamp 0
         await self.db.set_cache("key", {})
-        # Manually update timestamp to 2 hours ago
         await self.db.db.execute(
             'UPDATE cache SET timestamp = ? WHERE key = ?',
             (time.time() - 7200, "key")
         )
         await self.db.db.commit()
 
-        # Should exist with 3h TTL
         res = await self.db.get_cache("key", ttl=3*3600)
         self.assertIsNotNone(res)
 
-        # Should not exist with 1h TTL
         res = await self.db.get_cache("key", ttl=3600)
         self.assertIsNone(res)
+
+    async def test_favorites(self):
+        user_id = 123
+        await self.db.add_favorite(user_id, "id1", "Title 1")
+
+        favs = await self.db.get_favorites(user_id)
+        self.assertEqual(len(favs), 1)
+        self.assertEqual(favs[0], ("id1", "Title 1"))
+
+        is_fav = await self.db.is_favorite(user_id, "id1")
+        self.assertTrue(is_fav)
+
+        await self.db.remove_favorite(user_id, "id1")
+        is_fav = await self.db.is_favorite(user_id, "id1")
+        self.assertFalse(is_fav)
+
+    async def test_last_updated_migration(self):
+        # Check if column exists by querying it
+        res = await self.db.get_channel_id("nonexistent")
+        self.assertIsNone(res)
+
+        await self.db.set_channel_id("test", "id", "title")
+        res = await self.db.get_channel_id("test")
+        self.assertEqual(len(res), 3) # id, title, last_updated
+        self.assertIsNotNone(res[2])
 
 class TestPlotting(unittest.TestCase):
     def test_generate_chart(self):
@@ -86,7 +107,6 @@ class TestPlotting(unittest.TestCase):
         img_bytes = generate_comparison_chart(data)
         self.assertIsNotNone(img_bytes)
         self.assertTrue(len(img_bytes) > 0)
-        # Check if PNG signature is present
         self.assertEqual(img_bytes[:8], b'\x89PNG\r\n\x1a\n')
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
@@ -109,6 +129,26 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
 
         result = await self.client.search_channel("Test")
         self.assertEqual(result, ("UC123", "Test Channel"))
+
+    async def test_get_vods_error(self):
+        # Test error handling returns None
+        async def mock_runner(func, *args, **kwargs):
+            from googleapiclient.errors import HttpError
+            resp = MagicMock()
+            resp.status = 500
+            raise HttpError(resp, b'Error')
+
+        self.client._run_in_executor = mock_runner
+
+        # Override decorator for this test instance? The decorator wraps the method.
+        # We need to mock the underlying method or just let the decorator catch the error.
+        # Since we mocked _run_in_executor to raise error, the decorator will retry and then raise.
+        # Wait, the decorator catches specific status codes and retries, then raises.
+        # The method `get_vods` has a try/except block that catches HttpError and returns None.
+        # So it should return None.
+
+        result = await self.client.get_vods("UC123")
+        self.assertIsNone(result)
 
 if __name__ == "__main__":
     unittest.main()
