@@ -2,25 +2,7 @@ import asyncio
 from aiogram import html
 from database import Database
 from youtube_client import YoutubeClient, Video
-from datetime import datetime, timezone
-from utils import format_number
-
-def time_ago(dt: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    diff = now - dt
-
-    if diff.days > 365:
-        return f"{diff.days // 365}y ago"
-    elif diff.days > 30:
-        return f"{diff.days // 30}mo ago"
-    elif diff.days > 0:
-        return f"{diff.days}d ago"
-    elif diff.seconds > 3600:
-        return f"{diff.seconds // 3600}h ago"
-    else:
-        return "Just now"
+from utils import format_number, time_ago
 
 class ChannelService:
     def __init__(self, db: Database, client: YoutubeClient):
@@ -29,25 +11,41 @@ class ChannelService:
 
     async def resolve_channel(self, name: str) -> tuple[str, str, str] | None:
         """Returns (channel_id, title, original_name) or None."""
+        import time
+
+        # Check negative cache (1 hour TTL)
+        if await self.db.get_cache(f"not_found:{name.lower()}", ttl=3600):
+            return None
+
         channel_info = await self.db.get_channel_id(name)
         if channel_info:
-            return channel_info[0], channel_info[1], name
+            # Check staleness (30 days = 2592000s)
+            c_id, title, last_updated = channel_info
+            # Handle migration where last_updated might be None
+            if last_updated and (time.time() - last_updated < 2592000):
+                return c_id, title, name
+            # Else fall through to refresh
 
         found = await self.client.search_channel(name)
         if found:
             channel_id, title = found
             await self.db.set_channel_id(name, channel_id, title)
             return channel_id, title, name
+
+        # Cache negative result
+        await self.db.set_cache(f"not_found:{name.lower()}", {"found": False})
         return None
 
-    async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> str:
+    async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> tuple[str, list[Video]]:
         cache_key = f"{'shorts' if mode == 'Shorts' else 'vods'}:{channel_id}"
 
         # Try cache
         cached_data = await self.db.get_cache(cache_key)
         if cached_data:
+            # Check if cached data is a valid list (it could be empty list for 'no videos')
+            # Assuming cache stores lists.
             videos = [Video(**v) for v in cached_data]
-            return self.generate_report(channel_title, channel_id, videos, mode)
+            return self.generate_report(channel_title, channel_id, videos, mode), videos
 
         # Fetch from API
         if mode == "Shorts":
@@ -55,10 +53,14 @@ class ChannelService:
         else:
             videos = await self.client.get_vods(channel_id)
 
+        if videos is None:
+            # API Error
+            return f"⚠️ Could not fetch {mode} for <b>{html.quote(channel_title)}</b> (API Error).", []
+
         # Save to cache
         await self.db.set_cache(cache_key, [v.model_dump(mode='json') for v in videos])
 
-        return self.generate_report(channel_title, channel_id, videos, mode)
+        return self.generate_report(channel_title, channel_id, videos, mode), videos
 
     def generate_report(self, channel_title: str, channel_id: str, videos: list[Video], mode: str) -> str:
         safe_title = html.quote(channel_title)
@@ -74,9 +76,15 @@ class ChannelService:
                 safe_video_title = html.quote(video.title)
 
                 # Format: 🥇 <Link>
-                #         👁️ 1.5M • 2d ago
+                #         👁️ 1.5M • 👍 10K • 💬 500 • 2d ago
                 line_1 = f"{rank_icon} {html.link(safe_video_title, video.url)}"
-                line_2 = f"   👁️ {format_number(video.view_count)} • {time_ago(video.published_at)}"
+                stats_part = f"👁️ {format_number(video.view_count)}"
+                if video.like_count > 0:
+                    stats_part += f" • 👍 {format_number(video.like_count)}"
+                if video.comment_count > 0:
+                    stats_part += f" • 💬 {format_number(video.comment_count)}"
+
+                line_2 = f"   {stats_part} • {time_ago(video.published_at)}"
 
                 lines.append(line_1)
                 lines.append(line_2)

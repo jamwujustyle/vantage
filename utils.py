@@ -1,5 +1,23 @@
 import shlex
 from typing import List
+from datetime import datetime, timezone
+
+def time_ago(dt: datetime) -> str:
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    diff = now - dt
+
+    if diff.days > 365:
+        return f"{diff.days // 365}y ago"
+    elif diff.days > 30:
+        return f"{diff.days // 30}mo ago"
+    elif diff.days > 0:
+        return f"{diff.days}d ago"
+    elif diff.seconds > 3600:
+        return f"{diff.seconds // 3600}h ago"
+    else:
+        return "Just now"
 
 def format_number(num: int) -> str:
     """Formats a number into K/M suffix string."""
