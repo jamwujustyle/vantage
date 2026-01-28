@@ -29,6 +29,9 @@ def format_number(num: int) -> str:
 
 def parse_compare_args(text: str) -> List[str]:
     """Parses arguments from the /compare command text."""
+    # Replace fancy quotes
+    text = text.replace('“', '"').replace('”', '"')
+
     try:
         parts = shlex.split(text)
     except ValueError:

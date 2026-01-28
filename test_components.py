@@ -21,8 +21,8 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(parse_compare_args("/compare a b"), ["a", "b"])
         self.assertEqual(parse_compare_args('/compare "Channel One" b'), ["Channel One", "b"])
         self.assertEqual(parse_compare_args("/compare"), [])
-        # Unbalanced quote fallback
-        self.assertEqual(parse_compare_args('/compare "Channel One'), ['"Channel', 'One'])
+        # Fancy quotes
+        self.assertEqual(parse_compare_args('/compare “Channel One” b'), ["Channel One", "b"])
 
     def test_split_text(self):
         text = "a" * 10
@@ -36,7 +36,7 @@ class TestUtils(unittest.TestCase):
 
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v9.db"
+        self.db_path = "test_bot_data_v10.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -139,13 +139,6 @@ class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
             raise HttpError(resp, b'Error')
 
         self.client._run_in_executor = mock_runner
-
-        # Override decorator for this test instance? The decorator wraps the method.
-        # We need to mock the underlying method or just let the decorator catch the error.
-        # Since we mocked _run_in_executor to raise error, the decorator will retry and then raise.
-        # Wait, the decorator catches specific status codes and retries, then raises.
-        # The method `get_vods` has a try/except block that catches HttpError and returns None.
-        # So it should return None.
 
         result = await self.client.get_vods("UC123")
         self.assertIsNone(result)

@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
+from aiogram.types import BotCommand
 from config import settings
 from database import Database
 from youtube_client import YoutubeClient
@@ -25,6 +26,17 @@ async def on_startup(bot: Bot, db: Database, client: YoutubeClient):
     await db.init_db()
     # Start background tasks
     asyncio.create_task(cache_pruner(db))
+
+    # Set bot commands
+    commands = [
+        BotCommand(command="compare", description="Compare top videos (VODs/Shorts)"),
+        BotCommand(command="favorites", description="List your saved channels"),
+        BotCommand(command="add", description="Add channel to favorites"),
+        BotCommand(command="remove", description="Remove channel from favorites"),
+        BotCommand(command="help", description="Show help message"),
+        BotCommand(command="start", description="Welcome message"),
+    ]
+    await bot.set_my_commands(commands)
     logging.info("Bot started.")
 
 async def on_shutdown(bot: Bot, db: Database, client: YoutubeClient):

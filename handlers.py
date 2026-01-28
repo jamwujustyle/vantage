@@ -31,11 +31,111 @@ async def cmd_welcome(message: Message):
     )
     await message.answer(text)
 
+@router.message(Command("favorites"))
+async def cmd_favorites(message: Message, db: Database):
+    favs = await db.get_favorites(message.from_user.id)
+    if not favs:
+        await message.answer("You have no favorites yet. Use /add [channel] to add one!")
+        return
+
+    text = "<b>⭐ Your Favorites:</b>\n\n"
+    for _, title in favs:
+        text += f"• {html.quote(title)}\n"
+
+    # Quick compare all button
+    names = [f'"{title}"' for _, title in favs] # Quote names
+    compare_cmd = f"/compare {' '.join(names)}"
+
+    text += f"\nCompare all: <code>{compare_cmd}</code>"
+
+    await message.answer(text)
+
+@router.message(Command("add"))
+async def cmd_add_fav(message: Message, db: Database, client: YoutubeClient):
+    args = parse_compare_args(message.text)
+    if not args:
+        await message.answer("Usage: /add [channel]")
+        return
+
+    name = args[0]
+    service = ChannelService(db, client)
+    res = await service.resolve_channel(name)
+
+    if not res:
+        await message.answer(f"Could not find channel: {name}")
+        return
+
+    c_id, title, _ = res
+    await db.add_favorite(message.from_user.id, c_id, title)
+    await message.answer(f"✅ Added <b>{html.quote(title)}</b> to favorites!")
+
+@router.message(Command("remove"))
+async def cmd_remove_fav(message: Message, db: Database, client: YoutubeClient):
+    args = parse_compare_args(message.text)
+    if not args:
+        await message.answer("Usage: /remove [channel]")
+        return
+
+    name = args[0]
+    service = ChannelService(db, client)
+    res = await service.resolve_channel(name)
+    if not res:
+        await message.answer(f"Could not find channel: {name}")
+        return
+
+    c_id, title, _ = res
+    await db.remove_favorite(message.from_user.id, c_id)
+    await message.answer(f"🗑 Removed <b>{html.quote(title)}</b> from favorites.")
+
+@router.callback_query(F.data.startswith("fav:"))
+async def on_fav_action(callback: CallbackQuery, db: Database):
+    action, _, channel_id = callback.data.split(":")
+
+    if action == "add":
+        # Need title. Check channel_map
+        async with db.db.execute("SELECT title FROM channel_map WHERE channel_id = ?", (channel_id,)) as cursor:
+            row = await cursor.fetchone()
+            title = row[0] if row else "Channel"
+
+        await db.add_favorite(callback.from_user.id, channel_id, title)
+        await callback.answer("Added to favorites!")
+
+    elif action == "remove":
+        await db.remove_favorite(callback.from_user.id, channel_id)
+        await callback.answer("Removed from favorites!")
+
+    # Update keyboard
+    is_fav = await db.is_favorite(callback.from_user.id, channel_id)
+
+    # Identify current mode from existing buttons
+    current_mode = "VODs" # default fallback
+    if callback.message.reply_markup:
+        for row in callback.message.reply_markup.inline_keyboard:
+            for btn in row:
+                if "Switch to Shorts" in btn.text:
+                    current_mode = "VODs"
+                elif "Switch to VODs" in btn.text:
+                    current_mode = "Shorts"
+
+    new_kb = get_report_keyboard(current_mode, channel_id, is_fav)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=new_kb)
+    except Exception:
+        pass
+
 @router.message(Command("compare"))
 async def cmd_compare(message: Message, db: Database, client: YoutubeClient):
     args = parse_compare_args(message.text)
     if not args:
-        await message.answer("Usage: /compare [blogger1] [blogger2] ...")
+        # Check if user typed arguments but parsing failed (e.g. weird spacing?)
+        # parse_compare_args returns [] if len < 2 (command + 0 args).
+        # If text has more words but args is empty, it means just command.
+
+        await message.answer(
+            "⚠️ <b>Usage:</b> <code>/compare [channel1] [channel2] ...</code>\n\n"
+            "<i>Tip: Use quotes for names with spaces!</i>\n"
+            "Example: <code>/compare PewDiePie \"MrBeast Gaming\"</code>"
+        )
         return
 
     service = ChannelService(db, client)
