@@ -29,14 +29,14 @@ class ChannelService:
         await self.db.set_cache(f"not_found:{name.lower()}", {"found": False})
         return None
 
-    async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> str:
+    async def fetch_data_for_channel(self, channel_id: str, channel_title: str, mode: str) -> tuple[str, list[Video]]:
         cache_key = f"{'shorts' if mode == 'Shorts' else 'vods'}:{channel_id}"
 
         # Try cache
         cached_data = await self.db.get_cache(cache_key)
         if cached_data:
             videos = [Video(**v) for v in cached_data]
-            return self.generate_report(channel_title, channel_id, videos, mode)
+            return self.generate_report(channel_title, channel_id, videos, mode), videos
 
         # Fetch from API
         if mode == "Shorts":
@@ -47,7 +47,7 @@ class ChannelService:
         # Save to cache
         await self.db.set_cache(cache_key, [v.model_dump(mode='json') for v in videos])
 
-        return self.generate_report(channel_title, channel_id, videos, mode)
+        return self.generate_report(channel_title, channel_id, videos, mode), videos
 
     def generate_report(self, channel_title: str, channel_id: str, videos: list[Video], mode: str) -> str:
         safe_title = html.quote(channel_title)
@@ -63,9 +63,15 @@ class ChannelService:
                 safe_video_title = html.quote(video.title)
 
                 # Format: 🥇 <Link>
-                #         👁️ 1.5M • 2d ago
+                #         👁️ 1.5M • 👍 10K • 💬 500 • 2d ago
                 line_1 = f"{rank_icon} {html.link(safe_video_title, video.url)}"
-                line_2 = f"   👁️ {format_number(video.view_count)} • {time_ago(video.published_at)}"
+                stats_part = f"👁️ {format_number(video.view_count)}"
+                if video.like_count > 0:
+                    stats_part += f" • 👍 {format_number(video.like_count)}"
+                if video.comment_count > 0:
+                    stats_part += f" • 💬 {format_number(video.comment_count)}"
+
+                line_2 = f"   {stats_part} • {time_ago(video.published_at)}"
 
                 lines.append(line_1)
                 lines.append(line_2)

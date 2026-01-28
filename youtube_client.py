@@ -12,6 +12,8 @@ from datetime import datetime
 class Video(BaseModel):
     title: str
     view_count: int
+    like_count: int
+    comment_count: int
     url: str
     video_id: str
     type: str  # 'VOD' or 'Short'
@@ -115,6 +117,9 @@ class YoutubeClient:
                 stats = item.get('statistics', {})
                 snippet = item.get('snippet', {})
                 view_count = int(stats.get('viewCount', 0))
+                like_count = int(stats.get('likeCount', 0))
+                comment_count = int(stats.get('commentCount', 0))
+
                 published_at_str = snippet.get('publishedAt')
                 # format: 2023-10-27T10:00:00Z
                 try:
@@ -125,6 +130,8 @@ class YoutubeClient:
                 videos.append(Video(
                     title=snippet.get('title', 'Unknown'),
                     view_count=view_count,
+                    like_count=like_count,
+                    comment_count=comment_count,
                     url=f"https://www.youtube.com/watch?v={item['id']}",
                     video_id=item['id'],
                     type='VOD',
@@ -176,6 +183,9 @@ class YoutubeClient:
                 stats = item.get('statistics', {})
                 snippet = item.get('snippet', {})
                 view_count = int(stats.get('viewCount', 0))
+                like_count = int(stats.get('likeCount', 0))
+                comment_count = int(stats.get('commentCount', 0))
+
                 published_at_str = snippet.get('publishedAt')
                 try:
                     published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
@@ -185,6 +195,8 @@ class YoutubeClient:
                 videos.append(Video(
                     title=snippet.get('title', 'Unknown'),
                     view_count=view_count,
+                    like_count=like_count,
+                    comment_count=comment_count,
                     url=f"https://www.youtube.com/shorts/{item['id']}",
                     video_id=item['id'],
                     type='Short',

@@ -7,8 +7,9 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime
 from database import Database
 from youtube_client import YoutubeClient, Video
-from services import ChannelService
-from utils import format_number, parse_compare_args, split_text, time_ago
+from services import ChannelService, time_ago
+from utils import format_number, parse_compare_args, split_text
+from plotting import generate_comparison_chart
 
 class TestUtils(unittest.TestCase):
     def test_format_number(self):
@@ -29,9 +30,13 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(len(chunks), 3) # aaaa, aaaa, aa
         self.assertEqual(chunks[0], "aaaa")
 
+    def test_time_ago(self):
+        res = time_ago(datetime.now())
+        self.assertIn("now", res)
+
 class TestDatabase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_bot_data_v6.db"
+        self.db_path = "test_bot_data_v7.db"
         self.db = Database(self.db_path)
         await self.db.init_db()
 
@@ -69,6 +74,20 @@ class TestDatabase(unittest.IsolatedAsyncioTestCase):
         # Should not exist with 1h TTL
         res = await self.db.get_cache("key", ttl=3600)
         self.assertIsNone(res)
+
+class TestPlotting(unittest.TestCase):
+    def test_generate_chart(self):
+        video = Video(
+            title="Test", view_count=100, like_count=10, comment_count=5,
+            url="url", video_id="vid", type="VOD", published_at=datetime.now()
+        )
+        data = [{'title': 'Test Channel', 'videos': [video]}]
+
+        img_bytes = generate_comparison_chart(data)
+        self.assertIsNotNone(img_bytes)
+        self.assertTrue(len(img_bytes) > 0)
+        # Check if PNG signature is present
+        self.assertEqual(img_bytes[:8], b'\x89PNG\r\n\x1a\n')
 
 class TestYoutubeClient(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
